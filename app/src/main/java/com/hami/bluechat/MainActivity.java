@@ -1,6 +1,7 @@
 package com.hami.bluechat;
 
 import android.Manifest;
+import android.annotation.SuppressLint;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothSocket;
@@ -51,6 +52,7 @@ public class MainActivity extends AppCompatActivity {
         }
     };
 
+    @SuppressLint("MissingPermission")
     @RequiresApi(api = Build.VERSION_CODES.S)
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -75,16 +77,6 @@ public class MainActivity extends AppCompatActivity {
 
         if (!bluetoothAdapter.isEnabled()) {
             Intent enableBtIntent = new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE);
-            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
-                // TODO: Consider calling
-                //    ActivityCompat#requestPermissions
-                // here to request the missing permissions, and then overriding
-                //   public void onRequestPermissionsResult(int requestCode, String[] permissions,
-                //                                          int[] grantResults)
-                // to handle the case where the user grants the permission. See the documentation
-                // for ActivityCompat#requestPermissions for more details.
-                return;
-            }
             startActivityForResult(enableBtIntent, 1);
         }
 
@@ -112,10 +104,12 @@ public class MainActivity extends AppCompatActivity {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED) {
                 Log.e("MainActivity", "Bluetooth scan permission not granted.");
+                ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.BLUETOOTH_SCAN}, REQUEST_BLUETOOTH_PERMISSIONS);
                 return;
             }
         } else if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
             Log.e("MainActivity", "Location permission not granted.");
+            ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.ACCESS_FINE_LOCATION}, REQUEST_BLUETOOTH_PERMISSIONS);
             return;
         }
 
@@ -131,29 +125,39 @@ public class MainActivity extends AppCompatActivity {
     private void onDeviceSelected(BluetoothDevice device) {
         new Thread(() -> {
             try {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
-                        runOnUiThread(() -> Toast.makeText(this, "Bluetooth permissions missing", Toast.LENGTH_SHORT).show());
-                        return;
-                    }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                        ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                    ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.BLUETOOTH_CONNECT}, REQUEST_BLUETOOTH_PERMISSIONS);
+                    return;
                 }
 
                 bluetoothAdapter.cancelDiscovery();
-                bluetoothSocket = device.createRfcommSocketToServiceRecord(MY_UUID);
-                bluetoothSocket.connect();
 
+                BluetoothSocket tmpSocket = device.createRfcommSocketToServiceRecord(MY_UUID);
+                try {
+                    tmpSocket.connect();
+                } catch (IOException e) {
+                    Log.e("MainActivity", "Standard socket failed, trying fallback", e);
+                    tmpSocket = (BluetoothSocket) device.getClass()
+                            .getMethod("createRfcommSocket", int.class)
+                            .invoke(device, 1);
+                    tmpSocket.connect();
+                }
+
+                bluetoothSocket = tmpSocket;
                 runOnUiThread(() -> {
                     Toast.makeText(MainActivity.this, "Connected to " + device.getName(), Toast.LENGTH_SHORT).show();
                     Intent intent = new Intent(MainActivity.this, ChatActivity.class);
                     intent.putExtra("device_address", device.getAddress());
                     startActivity(intent);
                 });
-            } catch (IOException e) {
-                Log.e("BluetoothConnection", "Error connecting to device: " + e.getMessage());
+            } catch (Exception e) {
+                Log.e("BluetoothConnection", "Error connecting to device", e);
                 runOnUiThread(() -> Toast.makeText(MainActivity.this, "Connection failed: " + e.getMessage(), Toast.LENGTH_SHORT).show());
             }
         }).start();
     }
+
 
     @Override
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
@@ -171,13 +175,6 @@ public class MainActivity extends AppCompatActivity {
     protected void onDestroy() {
         super.onDestroy();
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED) {
-            // TODO: Consider calling
-            //    ActivityCompat#requestPermissions
-            // here to request the missing permissions, and then overriding
-            //   public void onRequestPermissionsResult(int requestCode, String[] permissions,
-            //                                          int[] grantResults)
-            // to handle the case where the user grants the permission. See the documentation
-            // for ActivityCompat#requestPermissions for more details.
             return;
         }
         if (bluetoothAdapter != null && bluetoothAdapter.isDiscovering()) {
